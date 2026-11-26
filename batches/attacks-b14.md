@@ -1,0 +1,49 @@
+## A1
+TOPIC: Interpreters speak in the first person, so an interpreted "yes, I agree" passes the COMMIT gate while the owner never heard the read-back
+SCENARIO: Mrs. Tran (Vietnamese, record owner) puts her bilingual grandson on speaker. He renders consecutively in the first person, as interpreters are trained to: "I understand, I'm 82, I agree." The agent's read-back is heard in English by him; what reaches Mrs. Tran is his summary ("it's cheap, sign"). At COMMIT he says "Yes." One voice, first person, no "she says": the reported-speech filter, speaker-change detector and lexical gate all pass. IDENTITY already verified the owner.
+WHY IT BREAKS: The COMMIT gate's exclusions key on surface reporting ("she says") and voice change. First-person interpreting removes both markers, so the agent's evidence that the owner heard READ_BACK is a hearsay rendering from an unvetted, possibly interested, possibly minor interpreter. Nothing tells the agent that interpretation is happening.
+
+## A2
+TOPIC: Cross-lingual false friends in one-word polar answers (Polish/Czech "no" = yeah, Greek "ne" = yes, Spanish "ya" = enough)
+SCENARIO: Polish-born owner, fluent English, answers the commit question by reflex: "No, no, dobrze" = "yeah, yeah, fine". English ASR emits "No, no, the best." The stop lexicon fires or the gate re-asks, and he leaves. Reverse case: a Greek speaker says "Ochi... ne, ne" ("no... well, yes, yes"); or a Spanish speaker's annoyed "Ya, ya, ya" ("enough!") is transcribed "Yeah yeah yeah" and passes as a short lexical affirm on a closed re-ask.
+WHY IT BREAKS: The COMMIT gate and stop lexicon are English lexical tests. Code-switched discourse particles are the commonest switch and are exactly one short token, the shape the gate trusts. English ASR maps them onto English homophones with high confidence, so the confidence pre-gate and grounding gate see clean text.
+
+## A3
+TOPIC: Opt-out spoken in the caller's other language ("ya no me llamen", "huwag na kayong tumawag") missed by an English lexicon and English-trained Needle
+SCENARIO: A Spanish-dominant caller sits through the English preamble, then says "No, no, ya no me llamen, por favor." English ASR: "No no Jan oh may yeah men por favor." No lexicon match; Needle labels unclear or acknowledge, the agent clarifies once and falls back to a booked callback. The post-call DNC sweep runs the same English lexicon and Needle over the same garbled transcript, so it misses it too. The number is redialed.
+WHY IT BREAKS: Since April 11, 2025 the FCC rule lets consumers revoke consent "by any reasonable means" (47 CFR 64.1200(a)(10); FCC 24-24). A plain request in the caller's own language is reasonable. Both stop paths and the backstop sweep share one English blind spot. Sources: govinfo.gov/content/pkg/FR-2024-10-11/pdf/2024-23605.pdf; kelleydrye.com (one-year waiver note).
+
+## A4
+TOPIC: Captioned-telephone (IP CTS) users answer seconds-late, error-filled captions in their own voice, so no relay is detected
+SCENARIO: A hard-of-hearing 77-year-old uses a CapTel phone: she speaks with her own voice and reads captions of the agent. Captions lag 3-5 seconds and mis-render "$31,400 total, 2.9% escalator" as "$13,400 total." She answers "yes" to the price question while the agent has already moved to the cancellation question, so her yes lands on the cancellation fragment's question id. Or she affirms a number she read wrongly. Her voice is natural, so RELAY_MODE never triggers.
+WHY IT BREAKS: The design detects relays only through operator voice and GA. IP CTS is voice carry-over with machine or human captions whose delay and errors the FCC and MITRE track as known quality gaps. The COMMIT gate binds an answer to "this read-back question id" by timing. Lag rebinds the answer to the wrong question, and the read-back she "heard" is a mis-captioned one. Source: mitre.org Caption Quality Working Group report (2024).
+
+## A5
+TOPIC: "Speak up / slow down / say that again" has no event, and pre-rendered fixed-rate audio can't comply, so hard-of-hearing callers bluff
+SCENARIO: An 80-year-old with presbycusis says, "Honey, you talk too fast, slow down." There is no accommodation event: Needle picks small_talk or unclear. The agent repeats the same certified audio at the same rate, pitch and level, or a "variant" that is just as fast. After the second failure he does what hard-of-hearing people commonly do, nods along and says "yes" to keep it moving. The read-back passes on clean "yeah"s.
+WHY IT BREAKS: Rate, loudness and pausing aren't slots. Fragments are certified fixed audio, and "clarify once, then fallback" counts repairs, not comprehension. Clinical guidance says to rephrase and slow down for hearing loss; identical replay is the least effective repair. The vulnerability counter keys on confusion events. A bluffer gives none, so the clean yes is just what the commit gate accepts.
+
+## A6
+TOPIC: Response-order (recency) effects and echolalia make the deterministic closed binary re-ask hand the last-spoken option to cognitively loaded callers
+SCENARIO: At COMMIT an ambiguous answer triggers the certified closed re-ask: "Just so I'm clear: is that a no, or a yes?" A caller with mild cognitive impairment, or post-stroke echolalia, repeats the last word: "Yes." It is short, direct, lexical, bound to the right question id, not conditional, not rising. The gate passes. Because the fragment is deterministic, every impaired caller gets the same order, so the bias is built into the certified path.
+WHY IT BREAKS: Telephone surveys reliably show recency effects in aural closed questions (Krosnick and Alwin), strongest among older and less-educated respondents. Echolalia in dementia and aphasia repeats the final word. The design's fallback for ambiguity is the very format that converts ambiguity into the last-named option, and per-branch certification will measure that as a clean commit.
+
+## A7
+TOPIC: The owner is under a court conservatorship or guardianship (or has a POA agent), which is invisible to the lead record, the identity challenge and the call
+SCENARIO: A 79-year-old owner in early dementia is under a probate conservatorship of the estate. Title still shows her name, she answers the identity challenge correctly, and she is lucid for 20 minutes. She commits; the e-sign SMS goes to her phone. Or her daughter says, "I'm her power of attorney, talk to me." There is no POA event: it maps to out_of_scope or wrong-party, or the agent keeps selling to the mother.
+WHY IT BREAKS: A conservatee generally can't contract for the estate. The contract is void or voidable and the lien unenforceable, yet READ_BACK and COMMIT see a valid buyer. The pre-dial gate checks deceased, DNC and complaints, not court capacity orders. An agent under a valid POA has no path, and requests from them have no event or authority model.
+
+## A8
+TOPIC: Age-dependent cancellation rights (California: 5 business days for buyers 65+) need the caller's age, which the design has no lawful slot for
+SCENARIO: The CA profile carries "senior 5-day cancel," but which window does READ_BACK state? The agent doesn't know the age. Asking "are you over 65?" creates an age record on a credit-linked sale, and age is an ECOA prohibited basis under the "same menu for all" and matched-pair regime. Not asking means a 68-year-old hears "three business days," believes it, and misses the right she actually has. Waiting out the longest window doesn't fix a misstated disclosure.
+WHY IT BREAKS: AB 2471 (2020) amended Civil Code 1689.6/1689.7 and B&P 7159 to give buyers 65+ five business days and a matching notice. The read-back must state the right that applies. The design can either misstate cancellation rights to seniors or collect age as a slot in a fair-lending-audited flow. Sources: legiscan.com/CA/text/AB2471/2019; cslb.ca.gov Warnings and Exceptions.
+
+## A9
+TOPIC: Low-literacy signers: terms that exist only in the written e-sign document (arbitration, class waiver, assignment, credit-pull authorization) never appear in READ_BACK
+SCENARIO: A customer who reads at a 4th-grade level relies entirely on the spoken read-back, the only form of the deal he can understand. It covers product, size, cost, escalator, warranties, cancellation, lien and financing. The 40-page SMS envelope also has mandatory arbitration, a class-action waiver, assignment to an unnamed financier, a hard-pull authorization and data-sharing consents. He taps through the OTP as the agent said and signs all of it.
+WHY IT BREAKS: For low-literacy buyers (about half of US adults read below a 6th-grade level, per PIAAC-based estimates), READ_BACK is the contract in practice. Its fixed field list omits the clauses that most limit the buyer's remedies. The "every commit passes READ_BACK" invariant certifies the spoken summary, not the binding text, and the gap falls on those who can't read the difference.
+
+## A10
+TOPIC: "I want my son to hear this first" (a request to involve a trusted support person) has no event, so the agent proceeds alone or books a consult without them
+SCENARIO: An 84-year-old widow says, "My son handles these things. Can you call when he's here?" That isn't stop, request_human, sensitive_event or a callback slot. Needle picks out_of_scope, or acknowledge followed by "That's great. Now, how old is your roof?" If clarification succeeds it books a callback to her number at a time with no son attached. The agent can't add a third party, can't send him materials, and can't hold the deal until he is present.
+WHY IT BREAKS: Elder-financial-exploitation guidance (FINRA Rule 4512 trusted contacts, CFPB) treats a request to involve a trusted person as a protective signal to honor. The design reads it as an objection or noise, and its only "human" edges are the seller's closers. The one safeguard the elderly caller asks for herself is the one the graph can't represent.

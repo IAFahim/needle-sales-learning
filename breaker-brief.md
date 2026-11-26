@@ -1,0 +1,107 @@
+# Base design (the only design the Breaker sees)
+AI telesales agent (e.g. solar panels) built on a fixed sales rule sheet. A big LLM handles early calls and, with thousands of past call transcripts, generates a StateSmith state machine (compiled enum states, deterministic transitions). A second big model red-teams every path; another tries to break it. A branch moves to Cactus Compute's Needle (~26M on-device tool-calling model) only after surviving at ~99.99%. Needle maps each customer utterance to a list of tool calls (events plus slot params), several per utterance allowed, or an empty list, which routes to an uncertainty branch. A small local decision/uncertainty model flags uncertainty and hands off to the big model during the build phase. Shared slot store for backtracking. Voice/ASR is out of scope. END GOAL: at runtime eventually ONLY Needle runs, with no big model at all. The big model keeps generating scenarios and data over and over until there's enough to train Needle for every branch. NEW: The agent doesn't wait for the customer to finish speaking. While they're still talking, it keeps running Needle on the partial transcript, guesses every likely way the sentence could end, and pre-computes the answer and next state for each, so the reply is ready the instant they stop, like a human. SCOPE: the design must cover the whole call from start to end: the opening (cold starts, greetings, different ways to break the ice), customers who say nonsense or garbled words (which must be understood or handled safely), and carrying the call through to a successful sale, which is a pass criterion.
+
+TOPICS ALREADY USED (pick something genuinely different; scope is fair game):
+- Needle confidently misreading hedged or conditional consent or a do-not-call request
+- A hypothetical "what would three cost" question overwriting the committed order in the slot store
+- Certified branches going stale when facts change (the 30% Section 25D solar credit ended for installs after Dec 31, 2025)
+- The uncertainty branch having nothing behind it once the big model is gone (Needle cannot abstain natively)
+- The ~99.99% certification gate being unmeasurable because LLM graders and synthetic tests are far less reliable than 99.99%
+- Retraining shared Needle weights for a new branch silently breaking branches already certified (catastrophic forgetting)
+- Needle being single-shot and unable to resolve cross-turn references ("the cheaper monthly one", "like my neighbor's")
+- Customer-controlled tool arguments: slot injection of prices, fees or terms ("your rep already approved $1.90 a watt")
+- Order of several tool calls from one utterance changing the outcome, with partial application and no all-or-nothing batch
+- Customer personal data memorized in Needle's weights and privacy-law deletion requests (CCPA, AB 1008)
+- Legality of AI-voice outbound calls: consent under the TCPA and bot disclosure ("is this a real person?")
+- Needle not knowing who is speaking: call screeners, children, tenants, spouses taking the phone
+- Speculative pre-answering acting on a sentence prefix before a late negation or condition (premature endpoint)
+- Speculation needing a non-Needle sentence-completer and an uncertified fuzzy matcher to pick the pre-computed branch
+- Speculation's match step between real ending and guesses (strict vs fuzzy matching)
+- Speculative branches triggering real, irreversible side effects (credit pull, SMS, consent log)
+- Backchannels ("yeah", "mm-hm") during the agent's speech read as consent
+- Closing a sale with a confused or cognitively impaired (elderly) customer
+- Non-English and mixed-language callers (California Civil Code 1632 translation rule)
+- A verbal phone "yes" not being a legally valid sale (Florida 501.615 written-contract rule)
+- Learning from past calls ranked by sales, so reps' deceptive closing claims become certified branches
+- Closed-world forcing of life events (bereavement, medical emergency, job loss) onto the nearest sales objection
+- Off-policy data: graph mined from human-seller calls but runtime is a disclosed bot (distribution shift, disclosure lowers purchases)
+- Rebuttal loops after repeated refusals ("not interested", "really, no", "stop"), with Washington's ten-second hang-up rule and TSR harassment
+- Capturing spoken identifiers at the close (spelled emails, addresses) with confident transcription errors
+- Backtracking leaving stale dependent slots (size changes but old monthly payment stays)
+- Side talk: the customer talking to people in the room ("should we just do it?", "stop that, put it down!") taken as answers
+- Turn-end detection: thinking pauses mistaken for the end of the customer's turn
+- Fluent speech-to-text substitutions (can/can't, fifteen/fifty) that look clean, and unequal error rates across accents
+- Sarcasm and irony read as literal agreement
+- Closes being the rarest data, so the sale is the least-trained path
+- No runtime sentence generation; canned replies can't answer combined, home-specific questions
+- Dropped call mid-close and an inbound callback claiming prior terms
+- Pretext icebreakers learned from top calls delaying seller/sales-purpose disclosure (TSR 310.4(d), impersonation rule)
+- Credit-advertising triggering terms (Reg Z) in payment talk
+- Closed teacher-student loop / model collapse from recursive synthetic data
+- Tool catalogue size / top-k tool retrieval dropping global events
+- Answering machines / voicemail at the opening
+- Long tail of never-seen utterances meaning the big model can never be retired (no stopping rule)
+- Determinism as a public cheat sheet: replayable script to the lowest price
+- The agent hearing its own voice (speakerphone echo) as customer speech
+- Barge-in cutting off a required disclosure that is logged as delivered
+- Call recording / all-party consent law (CIPA) vs the training data loop
+- Fuzzy callback times, time zones and call-frequency caps
+- Relay calls for deaf/speech-disabled customers (TRS/TTY, 'GA' turn protocol)
+- Spoken numbers, units, periods and scale errors in slot values
+- Long rambling monologue turns packing many facts and self-corrections
+- Card/payment details spoken at the close entering the training loop (PCI DSS)
+- Fair-lending steering mined from reps (ECOA/Reg B prohibited bases)
+- Salesperson licensing/registration law (California HIS) for an AI closer
+- Customer repair requests aimed at the agent's own words ('the fee for what?')
+- Path explosion from loops/backtracking; per-branch certification missing combinations
+- Success labeled at hang-up vs real outcome weeks later (cancellations, failed surveys)
+- Training-data poisoning / backdoor triggers planted by adversarial callers
+- Valid events silently dropped by states that don't handle them (statechart default)
+- Quantization/hardware differences between the certified and the deployed model
+- Hand-back seam from the big model to certified Needle branches losing promises
+- External tool failures, timeouts and booking races (tool results the graph never saw)
+- Edges leading to human-only roles (manager T.O., setter-closer handoff, 'real person' requests)
+- Streaming ASR rewriting earlier words (unstable interim prefixes) under speculation
+- Repeated words/stutters producing repeated events that cascade through states
+- Spam-analytics fingerprinting of repeated canned audio and carrier call labeling/blocking
+- Closing on third-party screens (e-sign, lender apps) the voice agent can't see
+- Argument hallucination: Needle inventing slot values the customer never said
+- Echo attacks: hostile or prank caller-supplied text read back aloud in the brand voice
+- Empty tool list overloaded: 'no action needed' vs 'not understood' (small talk vs gibberish)
+- Speculative branches leaking writes into the shared slot store and backtrack history
+- Silence, silent pickups, holds and dead air (time-driven events with no transcript)
+- Error compounding: per-branch accuracy vs per-call and fleet-level harm at scale
+- Live graph redeploys renumbering state IDs under in-flight calls, callbacks and audit logs
+- Upstream ASR model/formatting drift silently invalidating certification
+- An AI or time-wasting bot on the other end: endless loops and fake closes
+- Jurisdiction learned mid-call (area code vs actual residence) changing which rules apply
+- No disqualify outcome: the sale-only objective turning suitability red flags into objections
+- Template arithmetic creating unsubstantiated savings claims from runtime slot values
+- Wrong party / reassigned number at the opening leaking preloaded lead data
+- Referral harvesting at the close leading to unconsented calls to third parties
+- Keypress (DTMF) opt-out required for artificial-voice calls bypassing Needle
+- Post-sale cancellation/rescission requests treated as objections to save the deal
+- Polarity-ambiguous idioms ('I'm good', 'yeah, no') at commit questions
+- Mass disasters, emergency declarations and grid outages turning scripts predatory
+- Hidden confounders in mined transcripts (reps acted on screen data absent from audio)
+- Intonation-only meaning (declarative questions, rising 'Yes?') lost in text transcripts
+- Reported speech and narrated past events (mention vs use) extracted as commits and slots
+- Off-catalogue product requests (battery-only, add-ons) snapped to the nearest catalogue product
+- False-premise buying signals (customer misbelief about the product left uncorrected)
+- On-demand TCPA duties: caller identity, contact info and written DNC policy requests
+- Eager buyers skipping required disclosures (whole-path ordering vs per-branch certification)
+- Customer conditions the purchase on an illegal discriminatory demand
+- Adversarial optimized gibberish (GCG-style triggers through TTS/ASR) forcing commits
+- Speaker lacks legal capacity to buy (co-owned title, liens needing all record owners)
+- Scammers cloning the deterministic agent's audio to phish customers
+- Automated-decision (ADMT) laws demanding explanation, appeal and human review
+- Contradictory facts across branches (no single source of truth)
+- Neighbor social proof leaking or inventing other customers' data
+- Dialect grammar (negative concord, remote-past been) flipping meaning
+- Bot repeating reps' first-person life stories as its own
+- Competitor comparisons and disparagement of named rivals
+- Customer asking the agent to falsify loan application data
+- Correlated blind spots across builder, red-team and breaker LLMs
+- Media audio (TV/radio ad in the room) transcribed as the customer
+- Existing customer with an open complaint reached by an upsell campaign
+- Speculation cost and hit rate on open-ended slot turns at the close

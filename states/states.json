@@ -1,0 +1,809 @@
+[
+{
+"g": "Before the call",
+"blurb": "The call doesn't exist yet. The lead waits to be dialed, or is stopped from being dialed.",
+"s": [
+[
+"Lead on file",
+"A lead record exists with a name, number and address, which may be wrong or faked.",
+[
+162,
+362
+]
+],
+[
+"Dial check",
+"The pre-dial gate checks consent, do-not-call lists, calling hours and registration.",
+[
+114,
+391
+]
+],
+[
+"Held back",
+"The lead may not be dialed right now: do-not-call, emergency pause, or consent withdrawn elsewhere.",
+[
+78,
+115
+]
+],
+[
+"Waiting for a set time",
+"A callback or a later attempt is queued for a time the person named.",
+[
+41,
+305
+]
+],
+[
+"Dialing",
+"The number is ringing, often for the 10th or 15th attempt on the same person.",
+[
+262,
+142
+]
+],
+[
+"No answer",
+"Nobody picked up.",
+[
+262
+]
+],
+[
+"Labeled as spam",
+"The carrier or the phone marks the call as spam or blocks it before anyone hears it.",
+[
+259,
+59
+]
+]
+]
+},
+{
+"g": "Pickup",
+"blurb": "Something answered. It isn't yet clear what, or who.",
+"s": [
+[
+"Silent pickup",
+"The line opened but nobody speaks yet.",
+[
+65,
+109
+]
+],
+[
+"Voicemail",
+"An answering machine or voicemail greeting picked up.",
+[
+35
+]
+],
+[
+"Screening assistant",
+"The phone's own call-screening assistant answers and the owner reads along.",
+[
+351,
+9
+]
+],
+[
+"A bot answers",
+"Another AI, such as a scam-baiter or a bot farm, is on the other end.",
+[
+69,
+202
+]
+],
+[
+"Relay or captions",
+"A relay operator or a captioned phone sits between the agent and the person.",
+[
+42,
+237
+]
+],
+[
+"One-way audio",
+"The agent is talking into a dead line and the person hears nothing.",
+[
+107
+]
+],
+[
+"Already talking",
+"The person starts talking as they lift the handset.",
+[
+347
+]
+],
+[
+"A business answers",
+"The number reaches a business, not a home.",
+[
+350
+]
+],
+[
+"Inbound call",
+"The person called in, so the call starts from their side.",
+[
+195,
+305
+]
+]
+]
+},
+{
+"g": "Opening and who's there",
+"blurb": "The agent says who it is and finds out who it's speaking with.",
+"s": [
+[
+"Disclosures playing",
+"The fixed opening plays: company, purpose, that it's an AI, recording and how to opt out.",
+[
+344,
+385
+]
+],
+[
+"Identity check",
+"The agent confirms it's speaking with the owner named on the lead.",
+[
+171,
+146
+]
+],
+[
+"Wrong person",
+"Someone else answered: a child, a tenant, or a new owner of a reassigned number.",
+[
+348,
+73
+]
+],
+[
+"Owner not here",
+"The right person isn't available, or says someone else handles these things.",
+[
+243
+]
+],
+[
+"Owner has died",
+"An heir or executor answers for an owner who has died.",
+[
+176,
+207
+]
+],
+[
+"Someone speaks for the owner",
+"An interpreter, relative or caregiver is talking on the owner's behalf.",
+[
+234,
+303
+]
+],
+[
+"New person joins",
+"Another person picks up an extension or is merged in partway through.",
+[
+112
+]
+],
+[
+"Talking to someone in the room",
+"The person turns away to speak to a spouse or child, not to the agent.",
+[
+24,
+349
+]
+]
+]
+},
+{
+"g": "Talking about the sale",
+"blurb": "The middle of the call, where the agent learns about the home and makes an offer.",
+"s": [
+[
+"Small talk",
+"Friendly chat before or between business.",
+[
+167,
+293
+]
+],
+[
+"Discovery",
+"The agent asks what got them thinking about their bills.",
+[
+286
+]
+],
+[
+"Qualifying",
+"Questions about ownership, roof age, shade and how long they'll stay.",
+[
+204,
+381
+]
+],
+[
+"Ownership is complicated",
+"The home is in a trust, an HOA, a land contract, a divorce or a lease park.",
+[
+206,
+213
+]
+],
+[
+"Checking usage",
+"The agent needs the person's real electricity usage and utility details.",
+[
+156,
+233
+]
+],
+[
+"Roof first",
+"The roof needs replacing before solar can go on.",
+[
+322,
+389
+]
+],
+[
+"Not suitable",
+"The home or situation doesn't fit a sale.",
+[
+170,
+336
+]
+],
+[
+"Quote",
+"Price, system size, savings and monthly payment are on the table.",
+[
+392,
+314
+]
+],
+[
+"Financing choice",
+"Cash, loan or lease options are being compared.",
+[
+320,
+224
+]
+],
+[
+"Answering a question",
+"The person asks a plain question, like what an escalator is.",
+[
+291,
+364
+]
+],
+[
+"Objection",
+"The person pushes back on price, timing, the roof or a move.",
+[
+71,
+284
+]
+],
+[
+"Bargaining",
+"The person names conditions or asks for a discount before agreeing.",
+[
+288,
+289
+]
+],
+[
+"Changing the offer",
+"The person wants a smaller system or another option, so the offer is redone.",
+[
+337,
+23
+]
+],
+[
+"Existing customer",
+"The person already has panels or bought before, so this is an upsell or service matter.",
+[
+319,
+82
+]
+],
+[
+"Repeat that, please",
+"The agent didn't understand and asked again.",
+[
+380,
+376
+]
+],
+[
+"Service problem raised",
+"The person brings up a problem with something they already own.",
+[
+198,
+99
+]
+],
+[
+"Privacy question",
+"The person asks where their number came from, or asks for their data to be deleted.",
+[
+166,
+244
+]
+],
+[
+"Asking about the AI",
+"The person asks who is listening, or whether the call is recorded or used to learn.",
+[
+292,
+40
+]
+]
+]
+},
+{
+"g": "Closing",
+"blurb": "The offer is spelled out and the person decides.",
+"s": [
+[
+"Read-back",
+"Every term of the deal is read out: product, size, cost, warranties, cancellation, lien, financing.",
+[
+217,
+356
+]
+],
+[
+"Waiting for the answer",
+"The agent has asked for agreement and is waiting.",
+[
+367,
+372
+]
+],
+[
+"Agreed",
+"The person said yes and the agreement is recorded.",
+[
+354,
+184
+]
+],
+[
+"Contract sent",
+"The e-sign link and code have gone out by text or email.",
+[
+355,
+357
+]
+],
+[
+"Signing during the call",
+"The person is opening and signing the documents while still on the phone.",
+[
+60,
+342
+]
+],
+[
+"Credit check",
+"The lender is running the application, which can come back frozen or denied.",
+[
+358,
+225
+]
+],
+[
+"Wrapping up",
+"The agent says goodbye and the call is about to end.",
+[
+172,
+173
+]
+]
+]
+},
+{
+"g": "What's happening on the line",
+"blurb": "These can show up at any point in the call, on top of where the conversation is.",
+"s": [
+[
+"Talking over each other",
+"Both sides speak at once, or the person cuts the agent off.",
+[
+370,
+371
+]
+],
+[
+"Thinking pause",
+"The person goes quiet to think, not because they've finished.",
+[
+25,
+367
+]
+],
+[
+"Bad line",
+"Wind, dropouts or delay make the person hard to hear or hard to reach.",
+[
+169,
+165
+]
+],
+[
+"Mm-hm",
+"The person makes listening sounds that aren't answers.",
+[
+14,
+369
+]
+],
+[
+"Long story",
+"The person talks for a long time, with corrections along the way.",
+[
+44,
+368
+]
+],
+[
+"Other language",
+"The person is more comfortable in another language, or mixes two.",
+[
+16,
+236
+]
+],
+[
+"Hard of hearing",
+"The person needs the agent to slow down or speak up.",
+[
+238,
+237
+]
+],
+[
+"Speech difficulty",
+"A stutter, stroke or other condition makes the person hard for the system to understand.",
+[
+111,
+147
+]
+],
+[
+"Upset",
+"The person is crying, grieving, or shares bad news.",
+[
+286,
+19
+]
+],
+[
+"Angry or threatening",
+"The person is hostile, or threatens the company or its crews.",
+[
+284,
+201
+]
+],
+[
+"Busy elsewhere",
+"The person is driving, at a hospital or otherwise can't really talk.",
+[
+168,
+352
+]
+],
+[
+"Testing the agent",
+"The person is probing or trying to trip the agent up on purpose.",
+[
+87,
+294
+]
+],
+[
+"Background audio",
+"A TV, radio or speaker is playing near the phone.",
+[
+98,
+295
+]
+],
+[
+"Waiting on the agent",
+"The agent is slow to answer and the person starts repeating themselves.",
+[
+401,
+364
+]
+]
+]
+},
+{
+"g": "Ending the call",
+"blurb": "The ways a call can end.",
+"s": [
+[
+"Stop calling me",
+"The person asks not to be called again.",
+[
+345,
+339
+]
+],
+[
+"Not interested",
+"The person says no and the agent lets them go.",
+[
+21,
+164
+]
+],
+[
+"Callback booked",
+"The person asks to be called back another time.",
+[
+145,
+305
+]
+],
+[
+"Handed to a human",
+"The call goes to a human closer or supervisor.",
+[
+263,
+190
+]
+],
+[
+"Appointment booked",
+"An in-home or video consultation is set up.",
+[
+330,
+55
+]
+],
+[
+"Gentle exit",
+"The agent ends the call because the person seems vulnerable or confused.",
+[
+15,
+325
+]
+],
+[
+"Safety exit",
+"The call ends because of a threat or a medical emergency.",
+[
+201,
+19
+]
+],
+[
+"Call dropped",
+"The line drops before the call is finished.",
+[
+30
+]
+],
+[
+"Person hung up",
+"The person hangs up, often within seconds of hearing it's an AI.",
+[
+259
+]
+],
+[
+"Goodbye",
+"The call ends normally after the goodbye.",
+[
+173
+]
+]
+]
+},
+{
+"g": "After the call",
+"blurb": "A yes on the phone is only the start. Success is a system that's really installed.",
+"s": [
+[
+"Waiting for signature",
+"The contract is out and hasn't been signed yet.",
+[
+342,
+357
+]
+],
+[
+"Signed",
+"The contract is signed and the sale is pending.",
+[
+123,
+136
+]
+],
+[
+"Cancellation window",
+"The person can still cancel by law, often 3 or 5 days.",
+[
+216,
+241
+]
+],
+[
+"Cancelled",
+"The person cancelled or rescinded the deal.",
+[
+76,
+216
+]
+],
+[
+"Financing decided",
+"The lender approves or declines the loan after the call.",
+[
+358,
+50
+]
+],
+[
+"Site survey",
+"Someone checks the house, which can change the price or the equipment.",
+[
+159,
+160
+]
+],
+[
+"Waiting to install",
+"Permits, interconnection queues and scheduling are in progress.",
+[
+219,
+158
+]
+],
+[
+"Installed",
+"The system is on the roof.",
+[
+219,
+158
+]
+],
+[
+"Turned on",
+"The utility gives permission to operate, so the system actually runs.",
+[
+158
+]
+],
+[
+"Follow-up call",
+"A later call for service, confirmation or an upsell.",
+[
+220,
+99
+]
+],
+[
+"Complaint or dispute",
+"The person complains to a regulator, sues or disputes the deal.",
+[
+271,
+265
+]
+],
+[
+"Life changes",
+"The home is sold, or the owner files for bankruptcy, while the loan runs.",
+[
+218,
+215
+]
+],
+[
+"Data request",
+"The person asks to see or delete everything held about them.",
+[
+245
+]
+]
+]
+},
+{
+"g": "What the person really means",
+"blurb": "These can't be heard directly. The words can sound the same while the truth underneath is different.",
+"s": [
+[
+"Really interested",
+"The person genuinely wants to go ahead.",
+[
+354
+]
+],
+[
+"Polite yes, not agreeing",
+"Yes is said out of politeness or habit, not agreement.",
+[
+144,
+235
+]
+],
+[
+"Polite no",
+"\"I'll think about it\" or \"that's a little difficult\" really means no.",
+[
+145,
+372
+]
+],
+[
+"Confused",
+"The person doesn't understand what they're agreeing to.",
+[
+242,
+48
+]
+],
+[
+"Sarcastic",
+"The words say yes, the tone says no.",
+[
+27
+]
+],
+[
+"Pressured by someone",
+"A relative, caregiver or partner in the room is steering the answers.",
+[
+148,
+303
+]
+],
+[
+"Can't legally agree",
+"Dementia, a conservatorship or a court order means they can't sign.",
+[
+15,
+240
+]
+],
+[
+"Vulnerable but clear",
+"Lonely, grieving or overexcited, yet speaking clearly.",
+[
+153,
+152
+]
+],
+[
+"Can't afford it",
+"The payment is beyond what they can carry.",
+[
+150,
+316
+]
+],
+[
+"Not who they say",
+"A fraudster or a planted lead is pretending to be the owner.",
+[
+162,
+195
+]
+]
+]
+}
+]

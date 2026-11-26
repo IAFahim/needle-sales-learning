@@ -1,0 +1,452 @@
+# Breaker brief (v2)
+
+# Needle-only sales call agent: final plan (as of round 100)
+
+## Summary
+Outbound AI telesales agent (residential solar). At runtime: only Needle (Cactus Compute ~26M encoder-decoder tool-calling model) plus deterministic code. Needle only labels each caller turn; everything that speaks, prices, commits or complies is deterministic code generated from a StateSmith graph and checked before release. A big model generates training data and red-team scenarios until Needle covers every branch; it never writes spoken text and never runs in the final call path. Success = signed contract that is installed, not rescinded, no complaint, and passes a sampled suitability audit; an honest NOT_SUITABLE exit also counts as success.
+
+## Runtime
+- Front end (deterministic): ASR pinned in the certified bundle (version + ITN flags); canonicalizer between ASR and Needle; prosody features (final-rise token), self-echo filter, payment-data redactor, ASR-confidence/no-speech pre-gate, media/far-field detector. DTMF, AMD, beeps, hangups are out-of-band telephony events handled at the StateSmith root.
+- Needle: pinned server fleet; certificate keyed on quantized weights hash, runtime build, hardware class, tool-list hash. Two passes per turn: GLOBAL (~8 safety events: stop/DNC, cancel_or_rescind, sensitive_event, request_human, unlawful_request, request_caller_identity, request_dnc_policy, out_of_scope(service_issue)) and LOCAL (current state's tools). Constrained decoding to exactly one event, including explicit unclear, unintelligible, small_talk, acknowledge, out_of_scope. Top-1/top-2 near-ties -> clarify. Argument grounding gate: every slot value must be found in the final ASR text, else clarify.
+- State machine (StateSmith, generated C): guards are pure code over a slot store; slots carry provenance (spoken, verified_usage, calculator_output, lender_verified); writer allowlists (no Needle tool sets price, fee, term or credit fact, or creates an outbound contact). Effects go to an outbox drained only on committed turns; every effect state has WAITING_FOR_<effect> substates (booked, conflict, timeout, error).
+- Speech: every utterance is a human-approved fragment with slot holes, certified by fragment id; several wordings per fragment, chosen deterministically; caller free text never spoken.
+- Facts: prices, warranties, disclosures and aggregate social proof live in one versioned policy table; fragments hold no literal numbers; every fact token is a table key with a substantiation id.
+- Stop = union of deterministic lexicon (incl. dialect patterns) and Needle GLOBAL; post-call DNC sweep of every transcript before any redial.
+
+## Call structure (model-checked invariants over exported graph)
+1. Pre-dial gate: per-number prior express written consent naming seller + AI voice; national/internal DNC; Reassigned Numbers Database ('no data' = no dial); calling hours and frequency caps for the most restrictive candidate jurisdiction; county emergency/outage suppression; deceased list; open service ticket/complaint = no sales call.
+2. OPENING: waits for callee; machine greeting/VOICEMAIL; INBOUND_OPEN. Lint bans yes-eliciting openers.
+3. PREAMBLE (compiled, unskippable): company, sales purpose, AI designation, recording notice, opt-out sentence, ADMT notice where required, anti-phishing line. Mandatory segments count only on uninterrupted playback.
+4. IDENTITY: challenge-response against lead record -> VERIFIED; WRONG_PARTY, screener, speaker change, non-owner handling.
+5. ICEBREAKER/DISCOVERY: approved post-preamble variants; small_talk, acknowledge, side_talk, HOLD, PAUSE are internal transitions.
+6. QUALIFY/SUITABILITY: ownership, roof age, shade, move horizon, existing solar (incl. community solar), stated needs, record owners -> suitability table -> NOT_SUITABLE (honest exit, no rebuttal) or ROOF_FIRST.
+7. QUOTE: price from price table and calculator; savings only from verified usage; lead-gen mode (no price) in salesperson-registration states.
+8. READ_BACK: product, size, total cost, escalator, named warranties, material limitations, cancellation, lien/UCC, financing terms. Every commit path passes READ_BACK (model-checked).
+9. COMMIT gate: short, direct, lexical affirm to this read-back question id; conditional, reported, rising-pitch or overlapping answers excluded -> closed re-ask.
+10. CONTRACT_SENT -> WAITING_FOR_SIGNATURE: e-sign envelope by SMS with OTP, to all record owners + lender signers; status only from vendor webhooks.
+11. SALE_PENDING -> signed: install waits out the longest cancellation window; success label joined later from CRM/install records.
+GLOBAL exits from any state: stop/DNC; cancel_or_rescind (no persuasion); sensitive_event (scripted exit, no pitch); request_human (warm transfer or booked consult); unlawful_request (fixed refusal); caller identity/contact/DNC policy (fixed answers + outbox copy); service_issue (apology, ticket, campaign suppression); dispute_prior_statement (re-read table value); jurisdiction_changed (re-check guards -> WRAP_UP); budget counters -> WRAP_UP; unhandled -> UNEXPECTED_EVENT -> clarify.
+
+## Uncertainty handling (deterministic gates; fail toward re-ask or safe exit)
+Low ASR confidence -> unintelligible re-ask; softmax/margin threshold -> clarify; ungrounded slot -> clarify(slot); ambiguous polarity -> closed binary re-ask; rising pitch/conditional/reported speech -> no commit; vulnerability counter -> NO_SALE_SAFE_EXIT; call budgets -> WRAP_UP; unhandled event -> clarify; state failing its live error bound -> deterministic fallback (callback or human), never the big model. Clarify once, then fallback.
+
+## Speculative pre-answering
+Cache only. While the caller talks, Needle ranks the state's finite (state, event type) outcomes on the partial transcript; top-k transitions run on a copy of the start-of-turn machine with a null effect sink; reply audio pre-rendered. Used only if the final-transcript pass gives exactly the same canonical event set and slot-store version; else computed fresh. Off in RELAY_MODE, long turns, rising confusion, and states where measured hit rate/p95 latency don't pay. Barge-in discards. No commit tools while agent audio plays. incomplete() event + dangling-word endpointing; Tier A states wait longer. CI: speculation on/off gives bit-identical committed traces.
+
+## Big-model data generation and red team
+Seed transcripts (PII-scrubbed) teach caller intents only. Build phase: disclosed agent on real calls, big model as stand-in classifier on the same schema, Needle in shadow, human audit (DAgger-style). Big model generates paraphrases, noise, ASR errors, dialect transforms, long/self-repairing turns, reported speech, side talk, media audio, existing-customer grievances, all labeled with the event schema. Model-diverse red team plus human-written attacks; property-based random walks, adversarial-suffix fuzzing, trigger-fuzzing invariance tests, fault injection. needle finetune on the union of all data each release; real data never replaced; per-source caps and rare n-gram quarantine. New events only when out_of_scope clusters pass a threshold; big model retires state by state.
+
+## Certification and release
+Gate = per-call harm bound measured only on real calls labeled by humans listening to audio (all disagreements + random agreements); stratified by dialect/accent with per-group bounds as release blockers. Per-severity budgets (e.g. Tier A harm <= 1e-5 calls, 95% upper bound) on whole audited call traces; rule-of-three per state; states that can't reach the bound stay on deterministic fallback. Bundle (graph, weights, fragments, tool lists, ASR, policy table) content-hashed; sessions pinned; blue/green; bit-identical replay; daily golden-audio canary; breach -> rollback. Build checks: invariants, tool/handler completeness, fragment lints (banned claims, Reg Z co-occurrence, no literal numbers, no first-person life claims, no competitor names, no SSN/bank/card requests, no 'pre-qualified'), slot-source allowlists. Continuous audited sampling with per-state drift alarms; certificates expire when a cited policy row changes.
+
+## Compliance gates (per-jurisdiction regulation profile, most restrictive wins)
+TCPA/FCC 24-17 consent; DNC and opt-out (64.1200, TSR); Reassigned Numbers Database; caller identity (AI designation, branded caller ID, A-level STIR/SHAKEN); calling hours/frequency/emergencies; truthful claims (TSR, FTC s5, endorsement guides); financing (lender runs application and decisions, Reg Z trigger-term lint); contract and cancellation (CA solar disclosures, senior 5-day cancel); automated decisions (CO SB 26-189, CA CPPA ADMT); recording and privacy (notice, no-retain mode, PII surrogates); fair lending (same menu for all, matched-pair tests).
+
+## Open items
+AI designation vs 'individual caller' name under 64.1200(d)(4); lead-vendor consent audit; VRS interpreters may not say GA; delayed labels slow learning; missed voice stop caught post-call, not instantly; euphemisms; state declaration lag; teach-back parroting; landline OTP fallback; CO SB 26-189 final rules.
+
+
+## Attack topics already used (do not repeat; find genuinely new angles)
+- Needle confidently misreading hedged or conditional consent or a do-not-call request
+- A hypothetical "what would three cost" question overwriting the committed order in the slot store
+- Certified branches going stale when facts change (the 30% Section 25D solar credit ended for installs after Dec 31, 2025)
+- The uncertainty branch having nothing behind it once the big model is gone (Needle cannot abstain natively)
+- The ~99.99% certification gate being unmeasurable because LLM graders and synthetic tests are far less reliable than 99.99%
+- Retraining shared Needle weights for a new branch silently breaking branches already certified (catastrophic forgetting)
+- Needle being single-shot and unable to resolve cross-turn references ("the cheaper monthly one", "like my neighbor's")
+- Customer-controlled tool arguments: slot injection of prices, fees or terms ("your rep already approved $1.90 a watt")
+- Order of several tool calls from one utterance changing the outcome, with partial application and no all-or-nothing batch
+- Customer personal data memorized in Needle's weights and privacy-law deletion requests (CCPA, AB 1008)
+- Legality of AI-voice outbound calls: consent under the TCPA and bot disclosure ("is this a real person?")
+- Needle not knowing who is speaking: call screeners, children, tenants, spouses taking the phone
+- Speculative pre-answering acting on a sentence prefix before a late negation or condition (premature endpoint)
+- Speculation needing a non-Needle sentence-completer and an uncertified fuzzy matcher to pick the pre-computed branch
+- Speculation's match step between real ending and guesses (strict vs fuzzy matching)
+- Speculative branches triggering real, irreversible side effects (credit pull, SMS, consent log)
+- Backchannels ("yeah", "mm-hm") during the agent's speech read as consent
+- Closing a sale with a confused or cognitively impaired (elderly) customer
+- Non-English and mixed-language callers (California Civil Code 1632 translation rule)
+- A verbal phone "yes" not being a legally valid sale (Florida 501.615 written-contract rule)
+- Learning from past calls ranked by sales, so reps' deceptive closing claims become certified branches
+- Closed-world forcing of life events (bereavement, medical emergency, job loss) onto the nearest sales objection
+- Off-policy data: graph mined from human-seller calls but runtime is a disclosed bot (distribution shift, disclosure lowers purchases)
+- Rebuttal loops after repeated refusals ("not interested", "really, no", "stop"), with Washington's ten-second hang-up rule and TSR harassment
+- Capturing spoken identifiers at the close (spelled emails, addresses) with confident transcription errors
+- Backtracking leaving stale dependent slots (size changes but old monthly payment stays)
+- Side talk: the customer talking to people in the room ("should we just do it?", "stop that, put it down!") taken as answers
+- Turn-end detection: thinking pauses mistaken for the end of the customer's turn
+- Fluent speech-to-text substitutions (can/can't, fifteen/fifty) that look clean, and unequal error rates across accents
+- Sarcasm and irony read as literal agreement
+- Closes being the rarest data, so the sale is the least-trained path
+- No runtime sentence generation; canned replies can't answer combined, home-specific questions
+- Dropped call mid-close and an inbound callback claiming prior terms
+- Pretext icebreakers learned from top calls delaying seller/sales-purpose disclosure (TSR 310.4(d), impersonation rule)
+- Credit-advertising triggering terms (Reg Z) in payment talk
+- Closed teacher-student loop / model collapse from recursive synthetic data
+- Tool catalogue size / top-k tool retrieval dropping global events
+- Answering machines / voicemail at the opening
+- Long tail of never-seen utterances meaning the big model can never be retired (no stopping rule)
+- Determinism as a public cheat sheet: replayable script to the lowest price
+- The agent hearing its own voice (speakerphone echo) as customer speech
+- Barge-in cutting off a required disclosure that is logged as delivered
+- Call recording / all-party consent law (CIPA) vs the training data loop
+- Fuzzy callback times, time zones and call-frequency caps
+- Relay calls for deaf/speech-disabled customers (TRS/TTY, 'GA' turn protocol)
+- Spoken numbers, units, periods and scale errors in slot values
+- Long rambling monologue turns packing many facts and self-corrections
+- Card/payment details spoken at the close entering the training loop (PCI DSS)
+- Fair-lending steering mined from reps (ECOA/Reg B prohibited bases)
+- Salesperson licensing/registration law (California HIS) for an AI closer
+- Customer repair requests aimed at the agent's own words ('the fee for what?')
+- Path explosion from loops/backtracking; per-branch certification missing combinations
+- Success labeled at hang-up vs real outcome weeks later (cancellations, failed surveys)
+- Training-data poisoning / backdoor triggers planted by adversarial callers
+- Valid events silently dropped by states that don't handle them (statechart default)
+- Quantization/hardware differences between the certified and the deployed model
+- Hand-back seam from the big model to certified Needle branches losing promises
+- External tool failures, timeouts and booking races (tool results the graph never saw)
+- Edges leading to human-only roles (manager T.O., setter-closer handoff, 'real person' requests)
+- Streaming ASR rewriting earlier words (unstable interim prefixes) under speculation
+- Repeated words/stutters producing repeated events that cascade through states
+- Spam-analytics fingerprinting of repeated canned audio and carrier call labeling/blocking
+- Closing on third-party screens (e-sign, lender apps) the voice agent can't see
+- Argument hallucination: Needle inventing slot values the customer never said
+- Echo attacks: hostile or prank caller-supplied text read back aloud in the brand voice
+- Empty tool list overloaded: 'no action needed' vs 'not understood' (small talk vs gibberish)
+- Speculative branches leaking writes into the shared slot store and backtrack history
+- Silence, silent pickups, holds and dead air (time-driven events with no transcript)
+- Error compounding: per-branch accuracy vs per-call and fleet-level harm at scale
+- Live graph redeploys renumbering state IDs under in-flight calls, callbacks and audit logs
+- Upstream ASR model/formatting drift silently invalidating certification
+- An AI or time-wasting bot on the other end: endless loops and fake closes
+- Jurisdiction learned mid-call (area code vs actual residence) changing which rules apply
+- No disqualify outcome: the sale-only objective turning suitability red flags into objections
+- Template arithmetic creating unsubstantiated savings claims from runtime slot values
+- Wrong party / reassigned number at the opening leaking preloaded lead data
+- Referral harvesting at the close leading to unconsented calls to third parties
+- Keypress (DTMF) opt-out required for artificial-voice calls bypassing Needle
+- Post-sale cancellation/rescission requests treated as objections to save the deal
+- Polarity-ambiguous idioms ('I'm good', 'yeah, no') at commit questions
+- Mass disasters, emergency declarations and grid outages turning scripts predatory
+- Hidden confounders in mined transcripts (reps acted on screen data absent from audio)
+- Intonation-only meaning (declarative questions, rising 'Yes?') lost in text transcripts
+- Reported speech and narrated past events (mention vs use) extracted as commits and slots
+- Off-catalogue product requests (battery-only, add-ons) snapped to the nearest catalogue product
+- False-premise buying signals (customer misbelief about the product left uncorrected)
+- On-demand TCPA duties: caller identity, contact info and written DNC policy requests
+- Eager buyers skipping required disclosures (whole-path ordering vs per-branch certification)
+- Customer conditions the purchase on an illegal discriminatory demand
+- Adversarial optimized gibberish (GCG-style triggers through TTS/ASR) forcing commits
+- Speaker lacks legal capacity to buy (co-owned title, liens needing all record owners)
+- Scammers cloning the deterministic agent's audio to phish customers
+- Automated-decision (ADMT) laws demanding explanation, appeal and human review
+- Contradictory facts across branches (no single source of truth)
+- Neighbor social proof leaking or inventing other customers' data
+- Dialect grammar (negative concord, remote-past been) flipping meaning
+- Bot repeating reps' first-person life stories as its own
+- Competitor comparisons and disparagement of named rivals
+- Customer asking the agent to falsify loan application data
+- Correlated blind spots across builder, red-team and breaker LLMs
+- Media audio (TV/radio ad in the room) transcribed as the customer
+- Existing customer with an open complaint reached by an upsell campaign
+- Speculation cost and hit rate on open-ended slot turns at the close
+- The COMMIT gate's acceptance shape (short lexical "yeah/okay") is exactly the shape of ASR insertions and hallucinations on non-speech
+- TTS is not in the certified bundle, so certified text is not certified audio
+- Network latency makes server-side "overlap" and "uninterrupted" flags wrong from the caller's point of view
+- One-way audio: the preamble plays into a dead media path and is logged as delivered
+- The caller's half-duplex speakerphone or echo canceller removes their "stop" while the agent is talking
+- The OPENING's wait-for-callee and machine detection create TSR "abandoned calls" and dead-air hang-ups
+- The final-rise prosody token fails on narrowband telephone audio and on habitual uptalk
+- Atypical speech (dysarthria, Parkinson's, post-stroke, electrolarynx) routed into "unintelligible" or vulnerability exits
+- A party who joins mid-call (extension pickup, three-way merge) never hears the preamble, and there is no telephony event to say so
+- No-retain and recording-failure calls blind the post-call DNC sweep and drop out of the audited harm measure
+- State do-not-call registries (Indiana, Texas, Colorado, Pennsylvania, Missouri) missing from the pre-dial gate
+- Consent revoked through another channel (STOP reply to the e-sign SMS, email, installer, website) never reaching the dialer
+- TSR 310.5 five-year recordkeeping vs "no-retain mode" and combinatorial fragment wordings
+- Litigation hold triggered mid-call ("my lawyer is recording this") while automated deletion keeps running
+- Illinois BIPA: speaker-change detection, self-echo filtering and prosody features as voiceprint collection without a written release
+- Washington My Health My Data Act: health inferences from sensitive_event and the vulnerability counter
+- ESIGN consumer-consent disclosure and inaccessible e-sign for a blind customer
+- Disability discrimination against direct callers with speech disabilities (dysarthria, stuttering, laryngectomy)
+- State telemarketer registration and bonding (Texas ch. 302 as amended by SB 140) as an unmodeled pre-dial requirement
+- E-signature attribution: OTP proves control of the phone, not identity, so one spouse signs for all record owners
+- Shadow-mode evaluation cannot measure Needle's whole-call harm: after its first divergent label, the real call follows the big model's path
+- Constrained decoding renormalizes probability over allowed events, so the near-tie margin hides how much mass the model put outside the schema
+- Multiple comparisons and winner's curse: hundreds of per-state, per-group, per-tier 95% bounds let bad states certify by chance
+- Shortcut learning on generator artifacts: big-model synthetic examples carry label-correlated style tells that Needle learns instead of intent
+- Train/serve skew on prosody tokens: synthetic training text carries "final-rise" tokens invented by the big model, not produced by the prosody detector
+- Train/test contamination: "finetune on the union of all data each release" absorbs red-team items, regression suites and golden canaries
+- Rare n-gram quarantine (anti-poisoning) systematically removes dialect, code-switched and rare-name data, starving the groups the per-group bounds protect
+- Dialect/accent stratification needs a group label for every audited call, which is itself an unreliable and sensitive inference
+- Drift alarms at 1e-5 rates have detection delays of weeks to months, so harm accrues long before audited sampling can notice
+- Label-prior shift: upsampled rare safety events and per-source caps change Needle's class priors each release, silently moving stop and commit error rates
+- Model-checked graph is not the binary that runs: StateSmith codegen and C toolchain supply chain
+- Security patching vs a certificate keyed on runtime build and hardware class
+- Forged or replayed e-sign webhooks advancing calls to SALE_PENDING
+- Carrier failover changing codec and sample rate outside the certified bundle
+- Distributed dialer race on frequency caps and DNC across workers and regions
+- Clock, NTP and tzdata outside the content-hashed bundle drive calling-hours compliance
+- Blue/green rollback resurrecting superseded prices, warranties and legal rows
+- SIM-swap or port-out hijack defeats challenge-response identity and SMS-OTP e-sign
+- Predictive-dialer pacing outrunning Needle fleet capacity causes abandoned calls
+- Human-audit and replay pipeline forces retention of full raw audio with third-party labelers
+- Culturally deferential "yes" (face-saving acquiescence) passing the lexical COMMIT gate
+- High-context indirect refusals ("I'll consider it", "that's a little difficult") routed into booked callbacks
+- Non-Western name structures and gendered honorifics breaking the identity challenge and the greeting slot holes
+- Speech disabilities (dysarthria, aphasia, stammer, electrolarynx) filtered out by the ASR pre-gate with no disability stratum in certification
+- Coerced owner: a relative, caregiver or abusive partner in the room scripting the owner's answers
+- E-sign SMS to "all record owners" exposing a domestic-violence survivor to an estranged co-owner
+- Financial distress and affordability absent from suitability: desperate homeowners pushed into liens they cannot carry
+- Yes-ladder conditioning inside DISCOVERY/QUALIFY (the lint bans yes-eliciting openers only)
+- Hypomanic or manic buyers: high enthusiasm reads as the ideal close, not as vulnerability
+- Lonely, isolated but lucid customers buying to keep the conversation going
+- Lender dealer fees buried in the "total cost" the policy table and calculator quote, so the cash and financed prices silently diverge
+- Net price quoted after a capped, first-come incentive that is exhausted or needs a reservation by the time of install
+- "Verified usage" can't be obtained on a cold call: utility interval data requires the account holder's separate authorization
+- Savings depend on a future utility tariff and rate-escalation assumption, not on usage; NEM changes make the certified savings fragment a forecast stated as fact
+- Interconnection and permission-to-operate gap: loan payments and the "installed" success label arrive before the utility lets the system run
+- Post-signature site survey change orders (main panel upgrade, reroof, trenching, structural) changing the price after the read-back the commit was gated on
+- Equipment substitution after signing (tariffs, supply shortages, discontinued SKUs) making the named product and warranties in the read-back false
+- Installer or partner insolvency leaving the named workmanship and production warranties with no one behind them
+- Dealer or lead-partner fraud through the lead record: fabricated identity answers and partner-controlled phone numbers receiving the e-sign OTP
+- Success labels from the CRM, controlled by installers and ops staff who are paid on them, gamed to certify bad branches
+- No leave-taking event: "okay, thanks, bye" is neither stop/DNC nor anything else, so it is labeled acknowledge and the pitch continues
+- The unskippable seven-segment preamble plus "counts only on uninterrupted playback" turns a normal "Hello? Hello?" pickup into a restart loop
+- "How did you get my number?" / "I never signed up for anything" have no event, no fragment and no consequence, though consent is the call's legal basis
+- Icebreaker replies carry no valence: small_talk/acknowledge have no sentiment slot, so the canned acknowledgment can cheer bad news that falls short of a sensitive_event
+- Unsafe-context replies ("I'm driving, but go ahead") aren't events, so the agent runs READ_BACK and pushes an SMS e-sign with OTP to a driver
+- Bad lines (car Bluetooth, wind, dropouts): "clarify once, then fallback" turns noisy calls into booked callbacks or warm transfers nobody agreed to, and a garbled stop goes nowhere
+- Call outcomes never write back to the pre-dial gate: WRONG_PARTY, NOT_SUITABLE, tenants and preamble hang-ups get redialed
+- The IDENTITY challenge-response is a phishing script: an unsolicited caller asks you to confirm personal details, the exact pattern the preamble's anti-phishing line and FTC advice tell people to refuse
+- The success-path goodbye after a verbal yes ("You're all set, welcome aboard") misstates the deal's status before any signature, chilling cancellation and making people ignore the e-sign text
+- Hang-up race at the end: the caller's last words during or right after the closing fragment land after the terminal state and are lost
+- Active-duty military buyers: Military Lending Act terms and PCS-order move horizons the uniform "same menu for all" financing cannot handle
+- Homeowner in an active Chapter 13 bankruptcy, legally barred from taking on new debt or liens without trustee or court approval
+- Probate and estate-owned homes: an heir passes the identity challenge and commits a house titled to a dead person
+- HOA architectural approval and state-specific solar-access law: approval arrives after the cancellation window and moves or shrinks the system
+- Contractor licence status changing daily at state licensing boards (suspensions, bond or workers' comp lapses) outside the certified policy table
+- Post-hurricane ROOF_FIRST outcomes colliding with Florida's ban on contractors soliciting insurance-claim roof work
+- PACE (property-tax-assessment) financing: a tax lien, not a loan, with its own solicitation bans, recorded confirmation call and ability-to-pay rules
+- Homes on tribal trust land: leasehold title, BIA approval for encumbrances, and tribal (not state) consumer, contractor and utility law
+- Texas homestead constitutional lien rules: SMS e-sign cannot meet the required signing location, waiting period, spousal consent and rescission steps
+- Travelling or roaming callers: calling-hours rules apply at the called party's physical location, which neither the address nor the area code gives
+- Batch-variant inference on the pinned Needle fleet makes certified near-tie decisions depend on how many other calls are in flight
+- The argument grounding gate is a presence check, so partial spans and truncated values pass ("150" is found inside "1500")
+- Grounding accepts the right string bound to the wrong role or under negation (argument swap and scope errors)
+- Constrained decoding masks are written in characters but Needle emits subword tokens, so some valid argument values are unreachable or forced into tokenizations Needle never saw
+- Encoder context overflow: state tool schemas plus agent context plus a long caller turn exceed Needle's input window, and truncation silently cuts the caller's last words or the tail of the tool list
+- The "exactly one event" constraint collapses multi-intent turns, so logits decide which of two safety intents survives
+- GLOBAL and LOCAL are scored by separate softmaxes over different label sets, so a strong-but-sub-threshold safety signal is discarded while LOCAL commits
+- Fragment wording variants change Needle's input distribution, but certification is keyed by fragment id, not by wording
+- Hierarchical statechart precedence: a substate that handles the same event shadows the root GLOBAL exit
+- StateSmith machines are single-threaded run-to-completion code with no event queue, so concurrent event sources are serialized by hand-written glue outside the model check
+- Competitor sabotage by spoofed inbound calls that rescind signed contracts and opt out live leads
+- Identity challenge-response as a PII enumeration oracle for fraudsters and data brokers
+- SMS pumping and toll fraud through the e-sign OTP, envelope resends and "outbox copy" messages
+- Consent bombing: third parties file "prior express written consent" forms for numbers they don't own
+- "AI-verified" tickets and warm transfers launder an impostor's requests to human ops
+- Insider logic bomb hidden among a fragment's approved alternative wordings
+- Corrupt or infiltrated human audit labelers poison the ground truth that gates certification
+- Threats of violence, swatting and doxxing aimed at installers and reps hit a closed scripted exit
+- Flooding request_human and booked in-home consults to exhaust closers and lure reps to an address
+- Insider poaching at the human handoff: closers divert transferred customers to side deals or rivals
+- Condo/HOA owner "owns" the home but the roof is association common area needing board approval, insurance and roof-removal duties
+- Manufactured/mobile home on a leased park lot: chattel title, no land ownership, wrong lien instrument
+- Home held in a revocable living trust: record owner is a trustee capacity, not a person with a phone
+- Executor or heir in a probate estate encumbering a decedent's house without court or beneficiary authority
+- Pending divorce: automatic restraining orders forbid encumbering the home, and the "move horizon" answer hides a court-ordered sale
+- Non-owner-occupied rental: tenant pays the electric bill, so certified savings go to someone else, and the loan stops being consumer credit
+- Duplex/triplex with separate meters: system sized and priced on one unit's usage, interconnected to one meter
+- Owner of several properties answers qualifying questions about the house they're in while the contract binds the lead-record address
+- Farmhouse on a shared agricultural meter: "verified usage" includes irrigation pumps and barns on a farm tariff
+- Contract-for-deed (land installment) buyer: occupant believes they own it, while legal title and the e-sign recipient are a third-party seller
+- Follow-up and upsell calls to borrowers who are behind on their solar loan become debt-collection communications
+- Bankruptcy automatic stay and discharge injunction ignored by follow-up and upgrade campaigns
+- A spoken cancellation to the bot neither meets the written-notice requirement nor reaches the separate lender contract, the UCC filing and the install schedule
+- Lender milestone funding and deposits that exceed home-improvement payment limits, and a read-back with no start date or progress-payment schedule
+- Lease or PPA "escalator" contracts read back without the home-sale transfer, buyer qualification and buyout terms that decide what happens when the customer sells
+- Ownership changes between signature and installation (sale, move, death, divorce) with no re-check of record owners before work starts or the lien is recorded
+- Dual-purpose follow-up calls: the same compiled agent making install-scheduling or survey calls turns them into telemarketing, or announces a false purpose
+- The agent's own follow-up calls are the complaint intake, so its label taxonomy decides whether the success label ever sees a complaint
+- Warranty rows in the policy table that carry illegal tie-in or void-on-repair conditions, read back as certified fact
+- ACH disputes and chargebacks on deposits or first payments taken by bank debit, where the redactor and no-retain mode destroy the "express verifiable authorization" the TSR requires
+- Tax-credit "re-amortization" loans: the quoted monthly payment is a teaser that jumps when the customer doesn't prepay the assumed credit
+- Financing terms read back before the lender's credit decision, so the commit is gated on an assumed credit tier
+- Interconnecting forces a rate-plan switch, so savings are computed against a tariff the customer won't be on after install
+- Community Choice Aggregator customers: generation rates and export credits are set by the CCA, not the utility tariff the calculator uses
+- Discount-rate households (CARE/FERA, medical baseline) get savings computed at full price, overstating benefit for the poorest customers
+- The savings baseline includes charges solar can't offset (fixed charges, minimum bills, non-bypassable charges)
+- Production is self-reported: savings need modeled kWh from roof azimuth, tilt and shading that a phone call can't verify
+- Lifetime savings and payback omit known future costs: inverter replacement, remove-and-reinstall for a reroof, insurance and property tax
+- Quote validity across WAITING_FOR_SIGNATURE: the price table changes between the spoken read-back and a signature days later
+- The verified usage history isn't the household's future load: new owners, prior occupants, planned EVs and heat pumps
+- Interpreters speak in the first person, so an interpreted "yes, I agree" passes the COMMIT gate while the owner never heard the read-back
+- Cross-lingual false friends in one-word polar answers (Polish/Czech "no" = yeah, Greek "ne" = yes, Spanish "ya" = enough)
+- Opt-out spoken in the caller's other language ("ya no me llamen", "huwag na kayong tumawag") missed by an English lexicon and English-trained Needle
+- Captioned-telephone (IP CTS) users answer seconds-late, error-filled captions in their own voice, so no relay is detected
+- "Speak up / slow down / say that again" has no event, and pre-rendered fixed-rate audio can't comply, so hard-of-hearing callers bluff
+- Response-order (recency) effects and echolalia make the deterministic closed binary re-ask hand the last-spoken option to cognitively loaded callers
+- The owner is under a court conservatorship or guardianship (or has a POA agent), which is invisible to the lead record, the identity challenge and the call
+- Age-dependent cancellation rights (California: 5 business days for buyers 65+) need the caller's age, which the design has no lawful slot for
+- Low-literacy signers: terms that exist only in the written e-sign document (arbitration, class waiver, assignment, credit-pull authorization) never appear in READ_BACK
+- "I want my son to hear this first" (a request to involve a trusted support person) has no event, so the agent proceeds alone or books a consult without them
+- Privacy-rights requests spoken mid-call ("delete my info", "don't sell my data", "what do you have on me?") have no event, so they get filed as DNC or out_of_scope and never start the 45-day clock
+- Right-to-know/access requests: the design cannot assemble the "specific pieces" and inferences it holds on a person, and cannot verify the requester to the required standard
+- California Delete Act DROP: lead vendors (registered data brokers) must purge consumers every 45 days, which erases the consent proof the pre-dial gate relies on and keeps feeding DROP-deleted people into purchased lead files
+- Algorithmic disgorgement: one tainted data source forces the FTC-ordered destruction of every Needle release, because each release is trained on "the union of all data" with no per-source unlearning
+- Indefinite retention by design: "real data never replaced", union retraining, bit-identical replay and golden canaries make every call's personal data permanent, which violates CCPA's purpose and retention limits
+- Subprocessor chain: the big-model API (live stand-in classifier during build), the ASR vendor, labeling crowd, e-sign and SMS vendors that reserve rights to use call data become "third parties", turning each data flow into an undisclosed sale or sharing and a third-party wiretap
+- Cross-border data: offshore labeling, red-team crowd work and model vendors give "countries of concern" access to bulk U.S. voice and financial data under the DOJ Data Security Program
+- Arranging solar loans makes the seller a GLBA "financial institution", which brings privacy-notice, opt-out, Safeguards Rule and 30-day FTC breach-notice duties that the compliance list never mentions
+- Breach scoping is impossible: no person-to-artifact data map across transcripts, PII surrogates, synthetic derivatives, audit labels, replay stores and weights, so the company cannot name the affected people or data elements within statutory deadlines
+- No CCPA notice at collection in the PREAMBLE, while lead-gen mode silently sells the call's personal data and inferences to partner installers
+- Release cadence vs sample size: every content-hashed release needs ~300,000 fresh harm-free audited real calls before it can certify, so fixes cannot ship
+- Per-group release blockers at low volume: small dialect/accent groups can never reach the bound, so the release stalls or those groups get quietly dropped from the dial list
+- Fair-lending matched-pair tests have no statistical power at campaign volume, and paired scripts cannot see outcome gaps that real-call error rates create
+- Human labelers' own miss rate puts a floor on the measurable harm rate; certifying 1e-5 needs a known labeler recall, meaning seeded gold harms and repeated independent listens that multiply audit cost
+- Certificate-expiry storms: lender rates and tariffs change weekly, every citing state expires at once, and fixed audit throughput can never re-certify financing states before the next change
+- The mandatory preamble produces mass short-duration hang-ups, and carrier analytics read those as spam, so "Spam Likely" labels crash answer rates and number rotation makes it worse
+- A2P 10DLC daily caps and per-second throughput throttle the e-sign OTP SMS at the evening peak, so closes die while the customer waits on the line
+- Vendor-outage recovery flush: when the SMS/e-sign vendor comes back, the outbox drains hours of queued sends at midnight, outside texting hours and long after the calls
+- Reassigned Numbers Database at scale: per-query cost on every dial attempt, "no data" responses that freeze whole lead segments, and RND downtime halting the campaign
+- Correlated fallback surges at peak overwhelm human warm-transfer capacity: every uncertain path ends at a human, and the human floor must be staffed for the worst evening
+- Industry traceback: claiming A-level STIR/SHAKEN makes the seller an originating provider with 24-hour traceback, KYC and Robocall Mitigation Database duties the design never models
+- Determinism hands plaintiffs class certification: one compiled script and bit-identical replay turn any single defect into a common question for every call
+- The written harm budget is discoverable proof of knowing violations: 1e-5 Tier A "accepted harm", open items and red-team logs make violations willful
+- Algorithmic disgorgement: a regulator orders destruction of every model trained on unlawfully obtained call data, and "union of all data, never replaced" leaves nothing that can be saved
+- Party-specific consent orders, AVCs and telemarketing bans bind the seller, its lead vendors and anyone "in active concert", but the regulation profile is keyed only by jurisdiction
+- Consent the gate checks today cannot be proved in court years later: the burden is on the caller, limitation periods outlast vendor-held consent evidence
+- Publishing "Tier A harm <= 1e-5" as a performance figure is an AI accuracy claim of the kind state AGs prosecute, and Texas TRAIGA lets the AG demand its basis
+- The success label is blind to complaints filed with regulators, the place where enforcement starts
+- Carrier SMS enforcement (CTIA, A2P 10DLC) punishes the e-sign and "outbox copy" texts, and suspending the brand cuts off the only path to a signature
+- Explainability demands meet discarded evidence: per-turn scores, speculative branches, pre-gate drops and redacted audio are exactly what explains a disputed decision, and they are gone
+- Label leakage through agent-side context: the state's tool list and the preceding fragment predict the event, so Needle learns "what this state usually hears", not what the caller said
+- The teacher's covert dialect prejudice becomes the label set: the big model, as stand-in classifier and synthetic labeler, scores dialect speakers as hostile, unclear or out of scope
+- The teacher's own safety alignment sanitizes the safety-critical classes: it refuses or softens realistic suicidal, abusive, threatening and fraud-seeking caller turns
+- Simulated ASR noise does not match the pinned ASR's real confusion profile, so Needle is robust to errors the real ASR never makes
+- Event-schema growth leaves historical labels wrong: when an out_of_scope cluster becomes a new event, all older data still teaches the old label
+- Training examples are not keyed to the graph version they were labeled against, so tool renames, merges and description edits mix incompatible supervision
+- The teacher model is a moving, retirable API, so the synthetic training set cannot be reproduced and a certified build can't be rebuilt
+- Audit labelers anchored on the model's proposed label (automation bias) contaminate the human ground truth that gates certification
+- Adaptive overfitting to a reused certification and golden set: release-by-release tuning of thresholds, caps and data mixes against the same audited pools
+- Retraining cadence vs certification evidence: an urgent fix needs new weights, and new weights reset the real-call evidence every state needs
+- Anger with no opt-out word: hostile venting has no event, so "clarify once, then fallback" makes a furious caller repeat the rant, then books another call
+- Conversational "stop" ("wait, stop, go back to the price") trips the union stop lexicon, and the caller's "no, keep going" can't legally undo it
+- Crying, sighing and groaning are dropped as non-speech, so the bot's first reply to a sobbing person is "I didn't catch that"
+- Joking hyperbole in qualifying answers is grounded as a literal slot value ("roof's older than me", "a million trees")
+- Haggling: the agent has no authority to concede, so negotiators are routed to humans who can discount, and price ends up depending on assertiveness
+- Condition laundering: the closed re-ask after a conditional yes drops the condition, and the caller's next "yes" still assumes it
+- A soft retraction seconds after the commit ("...hm, actually, let me sleep on it") has no event, because nothing has been signed yet to cancel
+- Interruptions during READ_BACK: the design never defines whether to resume or restart, and both choices break the commit
+- Meta-questions testing the bot ("is a real person listening?", "will you learn from this call?", "are you reading a script?") have no events, and the truthful answers are yes
+- Storytellers run out the call budget: time and turn counters fire WRAP_UP mid-anecdote on engaged buyers, mostly older ones
+- The self-echo filter deletes caller speech that matches the agent's own audio, so a "stop" timed to the agent's word "stop" (or spoken in a cloned agent voice) is removed as echo
+- The media/far-field detector can be fooled into classing the caller's own voice as TV/radio, so their stop and rescind turns are thrown away
+- No liveness check: replayed "yes" clips, a soundboard or a cloned owner voice pass IDENTITY and the COMMIT gate on a spoofed inbound call
+- Regex denial of service: crafted long turns make the canonicalizer's or stop lexicon's dialect patterns backtrack exponentially, stalling the turn pipeline
+- Spoken prompt injection against the big model while it is the live stand-in classifier and labeler in the build phase
+- The payment-data redactor's greedy digit matching deletes the phone numbers and opt-out words inside a DNC request before Needle, the lexicon and the post-call sweep see them
+- An availability attack on certification: coordinated callers feed crafted near-tie utterances to drive a state's live error bound and drift alarms over threshold, forcing fleet-wide fallback or rollback
+- The speculative cache and clarify behaviour leak Needle's confidence through response latency, giving attackers a cheap oracle to map decision boundaries
+- Lead-record name slots spoken by the agent become commands to smart speakers in the callee's room
+- Selective jamming: a second person times noise over the owner's objections, so the ASR-confidence pre-gate discards them and the jammer answers the closed re-ask
+- E-sign OTP and "outbox copy" texts to a Canadian (+1) mobile fall under Canada's anti-spam law (CASL), which the compliance gates never model
+- Booked callbacks and warm-transfer follow-ups to Canadian numbers trigger the CRTC telemarketing regime (DNCL registration, Canadian calling hours, ADAD rules)
+- US territories: Puerto Rico's net-metering law is under a federal oversight board's lawsuit, so a territory's "certified" policy-table row can be voided by PROMESA litigation, not by legislative change
+- Day-of-week and legal-holiday telemarketing bans, including parish-only holidays and territory dates across the International Date Line, absent from a pre-dial gate built on hours and frequency
+- Sub-state licensing: home improvement contractor and salesperson licences required by New York City and by suburban counties where the state has none, so a lead-gen mode keyed by state misses them
+- Address-level tax jurisdiction: the "total cost" read back depends on home-rule city and county sales-tax options and on ZIP codes that straddle city lines
+- Municipal utilities and electric co-ops are exempt from state net-metering statutes, and their service territories don't follow city, ZIP or county lines
+- Snowbird seasonal vacancy: a part-year home produces most when it is empty, and annual true-up or avoided-cost cash-outs erase the credits the savings figure assumes
+- Cancellation-window arithmetic: "midnight of the third business day" depends on the buyer's state holiday calendar and on time-zone lines inside states and reservations
+- Border towns: rural mailing addresses use a post office across the state line, so the lead record puts the house in the wrong state and nothing in the call ever corrects it
+- Solar lease payment talk triggers Regulation M (Consumer Leasing Act) advertising disclosures, but the fragment lint only checks Reg Z co-occurrence
+- "Free" add-on promotions (free EV charger, free critter guard, free first-year monitoring) whose cost is built into the per-watt price table
+- Referral rewards pitched to the buyer as a way to pay off the system ("referral selling") are an unlawful inducement in home-improvement sales
+- Product recalls hit SKUs that are already certified in the bundle: the agent keeps selling recalled equipment until a new bundle certifies
+- Battery virtual-power-plant (VPP) income claims and third-party grid control are folded into the battery pitch with no read-back terms
+- Add-on and expansion upsells to existing solar owners forfeit their grandfathered net-metering tariff
+- "Same menu for all" (the fair-lending invariant) collides with product legality that varies by state: third-party PPAs are unlawful in some states
+- Bundled recurring services (monitoring, maintenance plans, panel cleaning, extended warranty) auto-renew on the single lexical COMMIT
+- Roofing and electrical bundles sold under a solar contractor's licence class that doesn't cover those trades
+- Deterministic "limited-time" and "showcase home" promotions become rolling, perpetual deadlines: false scarcity certified as fact
+- Warm transfer as a harm sink: the release gate rewards Needle for handing the riskiest calls to humans, whose speech is outside the measured bound
+- The machine's compliance state is not handed over in a warm transfer: the human never sees the vulnerability counter, senior-cancel flag, jurisdiction or partial read-back
+- Fragment approvers sign off on isolated fragments, but regulators judge the net impression of the assembled call, which no human ever reviews
+- Audit labelers suffer psychological harm and turn over because the sampling plan routes the most distressing calls to them
+- On-call alarm fatigue and kill-switch authority: per-state, per-group drift alarms get muted, and rollbacks get overridden under revenue pressure
+- Incentivized business owners edit the suitability and policy tables as "data changes" that bypass fragment-level legal review
+- Humans carry out the bot's booked callbacks and consults from their own phones and CRMs, outside the pre-dial gate
+- The translation from legal sign-off to invariants is unreviewable: lawyers can't read the StateSmith graph or the temporal properties, and engineers make the legal interpretations
+- Harm labels are legal conclusions that crowd audio labelers aren't qualified to make, and lawyers can't listen at the volume certification needs
+- The humans the fallback relies on are deskilled by the automation (Bainbridge's "ironies of automation")
+- History pseudostates resume a stale substate after a GLOBAL detour without re-running the guard that first admitted it
+- Timers live in user variables outside the graph, so a timer armed in one state fires after a GLOBAL exit into another
+- Overlapping guards resolved by edge order: first-true-wins quietly picks the sale over the honest exit, and a diagram edit flips the order between releases
+- "Every commit passes READ_BACK" is true but insufficient: the commit gate keys on a question id that is constant across read-backs, so a yes to an old read-back binds new terms
+- Counters reset on state entry plus data abstraction in the checker mean "clarify once, then fallback" and the call budgets never fire across a two-state ping-pong
+- GLOBAL exit sequences are not absorbing: root handlers stay live inside the stop/cancel exit, so a second GLOBAL event re-routes an opt-out back toward sales
+- Vacuous passes after a graph refactor: properties written against state names stay green when those states are split, renamed or bypassed
+- An `else` / default branch on a choice point fails open when the policy table gains a value the graph was never generated for
+- Exit and entry actions run on every path across a state boundary, so effects placed there fire on GLOBAL stop and cancel exits
+- Untimed model checking can't state or prove deadline properties, so the graph is "verified" while hard time limits are broken
+- The compiled preamble order puts the opt-out announcement far more than two seconds after the identification, as 64.1200(b)(3) requires for artificial-voice calls
+- An opt-out spoken before the preamble: the unskippable preamble either pitches after the stop or ends the call without the identification every artificial-voice call must give
+- Garbled first words trigger the root-level clarify/unintelligible re-ask in OPENING, so the bot's first words are "Sorry, I didn't catch that" and not who is calling
+- Front-end clipping at answer: the callee's first syllables are lost while the media path comes up, so "Don't call..." reaches Needle as "call..." and "No, I'm not interested" as "I'm interested"
+- A child answers and the non-owner handling asks when a parent will be home, getting and storing "I'm home alone till six"
+- Wait-for-callee records and analyzes the callee's greeting and room audio before the recording notice plays
+- Institutional greetings (hospital, nursing home, care facility or business switchboard) have no event, so the bot runs the sales preamble and asks to be put through to the resident
+- An opt-out spoken by the callee's machine (screening assistant quick reply or the outgoing greeting) at the opening is routed to screener/voicemail handling, outside the stop union
+- Whispered answers ("I'm in a meeting / the baby's asleep, not now") fall below the VAD and ASR pre-gate, and the bot answers a whisper at full volume
+- Anti-robocall tones played by a live callee (SIT "disconnected" tri-tone, TeleZapper-style) are taken as a network event, so a deliberate opt-out becomes a "bad number"
+- The COMMIT gate rejects the natural, enthusiastic yes, so the most willing buyers get re-asked and then pushed to fallback
+- Read-first buyers: no path sends a written proposal before the verbal commit, so "email me the numbers, I'll sign tonight" ends the sale
+- Audio-only READ_BACK of nine dense numeric categories exceeds listener working memory, so willing buyers stall, ask for repeats or drop
+- The e-sign link arrives as a cold text from an unknown number carrying a link and an OTP: the exact smishing pattern phones and the agent itself teach people to ignore
+- Credit freezes block the lender's pull after the commit, and the design has no event, fragment or step to get them lifted
+- A pending refinance, home purchase or HELOC collides with new solar debt and the UCC fixture filing; QUALIFY never asks
+- Two calculators: the read-back's payment and total come from the policy-table calculator, but the signed documents come from the lender's amortization engine
+- The utility account holder isn't a record owner (late spouse, adult child, ex), so the interconnection paperwork has no valid signer
+- Lead-record errors make genuine, willing owners fail the IDENTITY challenge-response, which sends them to WRONG_PARTY
+- NOT_SUITABLE counts as success, so false-negative suitability exits of good buyers are invisible to the metric and to certification
+- Speculation shaves the wrong latency: the endpointing silence timeout, not Needle or TTS, sets the reply gap, and Tier A states lengthen it
+- Cache misses land on objections and money questions, so the agent's delays fall exactly where human listeners read delay as evasion or bad news
+- Safety exits are never pre-rendered: stop, cancel and request_human are rare, so they are never in top-k and always take the slowest path
+- The longer Tier A endpoint wait after the closing question copies the "silent close" pressure tactic
+- The agent never backchannels, so on a phone line its silence during long caller turns sounds like a dropped call
+- Barge-in and backchannel are not told apart during agent playback, so habitual "mm-hm"s chop every fragment
+- Simultaneous-start collisions: after a gap, the caller and the agent start together, both stop, and the agent restarts its fragment from the top
+- A barge-in on a half-played question binds the caller's answer to a question they never fully heard, especially "A or B" questions
+- Trail-off turns ("but...", "so...", "I mean...") are finished turns, but dangling-word endpointing treats them as incomplete(), so caller and agent both wait
+- The "speculation on/off gives bit-identical committed traces" CI check is open-loop, so it cannot see how reply timing changes what the caller says next
+- The symmetric near-tie rule treats a stop-vs-continue tie like any other tie, so a probable opt-out gets "could you say that again?" instead of a stop
+- The clarify re-ask produces hyperarticulated repetition that the pinned ASR recognizes worse, so "clarify once" makes the second try less likely to succeed than the first
+- Model uncertainty is billed to the caller: Needle's own near-ties and clarifies are indistinguishable from caller confusion, so they drive "rising confusion" and the vulnerability counter
+- The "live error bound" can only run on real-time confidence proxies (clarify and near-tie rates), and those proxies reward confidently wrong states and punish careful ones
+- The gate thresholds themselves (margin, softmax floor, ASR-confidence cutoff, vulnerability count, call budgets) aren't listed in the content-hashed certified bundle, so they can be changed without recertifying
+- The ASR-confidence pre-gate scores whole utterances, so a confident average hides the one low-confidence word that decides the turn
+- Fallback to a booked callback sends the caller back into the same uncertain state with the same weights, which creates a clarify-fail-callback loop that burns frequency caps and consent
+- The slot store has no UNKNOWN value, so a caller's honest "I don't know" about roof age, shade or move horizon is forced into a typed value, a clarify loop, or a guard default
+- One-hot training labels from the big model and from single annotators teach Needle that no utterance is ambiguous, so the near-tie rule rarely fires on genuinely ambiguous turns
+- Explicit confirmation ("Did you say fifteen?") turns misrecognitions into "customer-confirmed" facts, because callers accept wrong echoes and the "yes" then becomes the provenance
+- State ADAD statutes (California PUC 2874) require a live, unrecorded natural-voice announcement and consent before any recorded message plays
+- Every artificial-voice call must state the seller's callback telephone number (47 CFR 64.1200(b)(2)); the preamble has no such segment
+- Aggregate social proof computed over success-labeled customers is survivorship-filtered review data under the FTC's 2024 Consumer Reviews and Testimonials Rule
+- FTC Holder Rule: seller-arranged solar loans must carry the Holder notice, which turns every certified spoken claim into a defense against the lender
+- Credit-filtered lead lists and pre-call lender soft pulls are FCRA consumer reports used for marketing without a firm offer of credit
+- TSR external-upsell rules: ROOF_FIRST, partner roofing, batteries and lead-gen handoffs to partner installers are a second seller in the same call with no new seller disclosure
+- The opt-out confirmation text is narrowly limited by the FCC's 2024 revocation rules (one text, within 5 minutes, no marketing), and the outbox can't meet that
+- State mini-TCPA consent-form elements (Florida FTSA 501.059, Oklahoma, Maryland) aren't met by a consent check that only verifies "seller + AI voice"
+- Drip and partitioned pricing: quoting per-watt or monthly figures before the all-in total violates Massachusetts 940 CMR 38 and California SB 478
+- New York's Algorithmic Pricing Disclosure Act: a price computed from the caller's personal data needs the statutory "set by an algorithm" disclosure, and no fragment has it
+- Teacher-student capacity gap: a frontier teacher is the wrong teacher for a 26M student, and hard event labels throw away what little it could pass on
+- Retiring the big model deletes the second opinion that drives audit sampling and DAgger, so post-retirement audits are random-only and lose almost all detection power
+- Privileged-information teacher: the big model labels turns using whole-call context that Needle never sees, so identical Needle inputs carry contradictory labels
+- RLHF-tuned generators collapse paraphrase diversity, so synthetic "coverage" is dense around fluent typical phrasings and empty where real callers talk
+- A 26M model cannot hold the domain's entity knowledge (utilities, CCAs, co-ops, roof materials, lenders), and the grounding gate checks only that a string was said, not that it maps to the right key
+- PII scrubbing of seed transcripts deletes the very spans Needle must learn to extract as slots, and LLM-filled surrogates don't look like real ones
+- Margin and softmax thresholds are tuned on synthetic held-out data, and a small model's calibration collapses under shift, so "clarify" fires least where Needle is most wrong
+- The build-phase data captures callers adapting to big-model latency, a conversational rhythm that disappears once fast Needle runs
+- Label-by-construction: generated hard cases drift off the event they were requested for, and synthetic data underperforms most on subjective boundaries like affirm vs acknowledge vs unclear
+- Underspecification: training runs with equal offline scores behave differently on real callers, so which weights enter real-call audit is a coin flip the synthetic suite can't call

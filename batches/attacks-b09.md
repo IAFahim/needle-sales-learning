@@ -1,0 +1,49 @@
+## A1
+TOPIC: Batch-variant inference on the pinned Needle fleet makes certified near-tie decisions depend on how many other calls are in flight
+SCENARIO: Caller says "yeah, I guess that's fine" at COMMIT. Replay at certification ran Needle alone (batch size 1): margin 0.031, just above the near-tie threshold, so affirm. In production at 6 pm the server batches this turn with 40 other calls; padding and different kernel tiling change reduction order, logits shift in the third decimal, the margin falls to 0.029, so clarify (or flips the other way and commits). Same weights hash, same build, same hardware class, so the certificate still claims it applies.
+WHY IT BREAKS: The certificate keys on weights, build, hardware and tool list, not batch composition. Thinking Machines (Sept 2025) showed common inference kernels are not batch-invariant: identical inputs give different outputs depending on concurrent load. "Bit-identical replay" and every threshold-sized margin are then unreproducible. Source: thinkingmachines.ai "Defeating Nondeterminism in LLM Inference"; simonwillison.net/2025/Sep/11/defeating-nondeterminism.
+
+## A2
+TOPIC: The argument grounding gate is a presence check, so partial spans and truncated values pass ("150" is found inside "1500")
+SCENARIO: Caller: "our bill runs about fifteen hundred in summer, one-fifty in winter." ITN gives "1500" and "150". Needle emits monthly_bill=150 for the summer question. Grounded. Another caller: "the roof is fifteen years old"; Needle emits roof_age=5 after a max-token cut or a dropped digit; "5" occurs inside "15", so grounded. A street "1234 Oakmont Ridge" truncated by the argument token limit to "1234 Oak" is also a substring. Every one passes the gate and lands in the slot store as spoken.
+WHY IT BREAKS: "Found in the final ASR text" checks that a string exists, not that it is the whole span the caller meant. Prefixes, digit fragments and truncations of a real value are always "found". The gate catches invented values but blesses exactly the corrupted-real-value errors a 26M copier makes most.
+
+## A3
+TOPIC: Grounding accepts the right string bound to the wrong role or under negation (argument swap and scope errors)
+SCENARIO: QUALIFY asks roof age and move horizon. Caller: "Roof's not twenty, it's maybe eight, and we're here another twenty easy." Needle emits roof_age=20, move_horizon_years=8. Both numbers appear in the transcript, both pass grounding, suitability table says roof under 25 and horizon over 7: SUITABLE. The real answer (horizon 20, roof 8) also passes, but a negated "not twenty" and a swap between two numeric slots are invisible to a gate that only checks membership.
+WHY IT BREAKS: Multi-number turns are common in discovery, and small seq2seq models are weakest at role binding and negation scope. Provenance says "spoken", so downstream guards treat a swapped value as caller fact. Suitability, sizing and the read-back then rest on a mis-bound number that no deterministic check can detect.
+
+## A4
+TOPIC: Constrained decoding masks are written in characters but Needle emits subword tokens, so some valid argument values are unreachable or forced into tokenizations Needle never saw
+SCENARIO: The LOCAL grammar for monthly_bill allows digits only, emitted digit by digit. Needle's tokenizer normally writes "250" as one token, which the grammar masks to fit its per-character automaton, forcing "2","5","0", a non-canonical sequence absent from training. Probability mass collapses onto whichever single digit was most likely after "2"; the emitted value becomes "25" or "200". Similar boundary clashes hit enum names sharing prefixes ("battery" vs "battery_backup").
+WHY IT BREAKS: Token/grammar misalignment is a known constrained-decoding failure: masking at token boundaries forces non-canonical tokenizations and distorts outputs (Beurer-Kellner et al., "Guiding LLMs the Right Way", arXiv 2403.06988; "Lost in Space", arXiv 2502.14969). Certification on unconstrained eval data never sees this distortion.
+
+## A5
+TOPIC: Encoder context overflow: state tool schemas plus agent context plus a long caller turn exceed Needle's input window, and truncation silently cuts the caller's last words or the tail of the tool list
+SCENARIO: At READ_BACK the LOCAL tool list (affirm, deny, clarify-per-term, dispute_prior_statement, out_of_scope, incomplete...) with JSON schemas takes most of the encoder window. Caller gives a 70-word answer ending "...so yes on the size, but not the loan, I'm paying cash." Tokenizer left-to-right truncation drops "but not the loan, I'm paying cash." Needle sees "...so yes on the size" and emits affirm with high confidence. No error is raised; the input simply fits after truncation.
+WHY IT BREAKS: A 26M on-device model has a short fixed context; state-dependent tool lists vary input length by state. Nothing in the design measures or blocks truncation, and per-state certification on typical-length turns never exercises the overflow. The lost words are the ones that change meaning.
+
+## A6
+TOPIC: The "exactly one event" constraint collapses multi-intent turns, so logits decide which of two safety intents survives
+SCENARIO: Caller: "Put me on your do-not-call list and let me speak to your supervisor about how you got my number." GLOBAL must output exactly one event. request_human edges out stop/DNC; the lexicon misses because the caller said "do-not-call list" inside a longer clause the dialect patterns don't anchor. The call warm-transfers a DNC requester to a sales supervisor. Another caller: "Cancel it, and who am I even talking to?" yields request_caller_identity; the cancel is never recorded.
+WHY IT BREAKS: Real callers routinely bundle intents. A single-label schema has no way to say "both", so the lower-scored legal obligation is dropped by construction. TCPA/TSR DNC requests must be honored whatever else is asked; a forced single choice turns compliance into an argmax.
+
+## A7
+TOPIC: GLOBAL and LOCAL are scored by separate softmaxes over different label sets, so a strong-but-sub-threshold safety signal is discarded while LOCAL commits
+SCENARIO: At COMMIT: "Okay, yes, but honestly I want to run it past someone at your company first." GLOBAL: none 0.52, request_human 0.44; no near-tie rule fires across "none" vs a safety event, so none. LOCAL, seeing a short lexical "yes": affirm 0.91. Arbitration sees GLOBAL=none, LOCAL=affirm, and commits. The design compares top-1 vs top-2 within a pass but has no rule combining a 0.44 safety probability with a LOCAL commit.
+WHY IT BREAKS: The two passes have no common probability scale and no joint decision rule. A commit should be blocked by substantial safety mass, yet the gate only reads each pass's argmax. Calibration of each pass separately says nothing about the joint error rate of "commit while a safety event was nearly chosen".
+
+## A8
+TOPIC: Fragment wording variants change Needle's input distribution, but certification is keyed by fragment id, not by wording
+SCENARIO: The read-back question has three approved wordings, chosen deterministically (e.g., by call hash). Needle's input includes the agent's last utterance to interpret "yes". Wording 1 ends "Shall we go ahead?"; wording 3 ends "Any questions before we go ahead?" The caller says "No, go ahead." Under wording 3 "no" answers the questions clause; Needle learned "no"-first strongly as deny. Wording 3's traffic shows a different commit/deny confusion matrix, but the per-fragment-id certificate pools all three.
+WHY IT BREAKS: If Needle doesn't see the question, a bare "yes" is ungroundable; if it does, every wording is a distinct input distribution. Rule-of-three per state on pooled traffic hides a variant with several times the error rate, and adding a new wording silently changes classifier behaviour without touching weights.
+
+## A9
+TOPIC: Hierarchical statechart precedence: a substate that handles the same event shadows the root GLOBAL exit
+SCENARIO: In WAITING_FOR_SIGNATURE, designers add a local handler for cancel_or_rescind meaning "cancel and resend the envelope" (caller: "cancel that text, send it to my other phone"). The caller later says "cancel the whole thing." StateSmith, following UML semantics, gives the innermost state first claim on the event; the local handler consumes it, resends the envelope, and the root cancel_or_rescind exit never runs. The model check passes because the root transition exists and is reachable from other states.
+WHY IT BREAKS: In hierarchical machines an event handled by a child stops propagating to parents (UML run-to-completion, child-first). "GLOBAL exits from any state" is only true where no substate reuses the event name. The invariant checks existence of a root edge, not that every state actually reaches it for every GLOBAL event.
+
+## A10
+TOPIC: StateSmith machines are single-threaded run-to-completion code with no event queue, so concurrent event sources are serialized by hand-written glue outside the model check
+SCENARIO: A Needle turn dispatches affirm into COMMIT; during its entry action (outbox write, fragment selection) the e-sign vendor webhook, a WAITING_FOR timeout tick and a telephony hangup arrive on other threads. Glue code calls dispatch() from the webhook thread while the first dispatch is mid-transition. Current-state variable and slot store interleave: the machine records CONTRACT_SENT, then the hangup handler exits to WRAP_UP, then the stale webhook moves it to SALE_PENDING after the call ended.
+WHY IT BREAKS: StateSmith generates plain C with a dispatch function and no built-in queue, locking or re-entrancy protection; concurrency, ordering and timers are the integrator's job. The model checker verifies the graph assuming atomic, ordered events, so every race lives in uncertified code the invariants never covered.

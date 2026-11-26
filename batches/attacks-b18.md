@@ -1,0 +1,49 @@
+## A1
+TOPIC: Label leakage through agent-side context: the state's tool list and the preceding fragment predict the event, so Needle learns "what this state usually hears", not what the caller said
+SCENARIO: The big model generates data state by state. In READ_BACK_CONFIRM, 90% of generated caller turns are affirm, because the generator is prompted "customer responds to the confirmation question". Needle's LOCAL input includes the state's tool list and the agent's last fragment. Training loss drops fastest by keying on that context. Live, a caller answers the confirmation with an off-pattern "hold on, my wife has to see the paperwork first". Needle outputs affirm with a wide margin. No near-tie, no clarify.
+WHY IT BREAKS: Per-state generation makes the context a near-perfect label proxy. That is classic target leakage. Held-out synthetic tests share the same leak, so they score high. The margin gate fires only on near-ties, but a leaked prior produces confident errors, not ties. Grounding checks slots, not events, so an affirm with no slots passes it.
+
+## A2
+TOPIC: The teacher's covert dialect prejudice becomes the label set: the big model, as stand-in classifier and synthetic labeler, scores dialect speakers as hostile, unclear or out of scope
+SCENARIO: In the build phase the big model labels real calls, and Needle is distilled from those labels. A Black homeowner says in AAE "I been told y'all about that roof." The teacher labels it dispute_prior_statement or unclear, where a Standard English paraphrase gets acknowledge. Dialect transforms it generates carry the same skew in their labels. Needle copies the pattern: more clarifies, more fallbacks and hostile-exit routing for AAE speakers. The human audit samples only some agreements.
+WHY IT BREAKS: Hofmann et al., Nature 633 (2024), showed LLMs hold covert, dialect-triggered prejudice against AAE even when overt bias is trained away. Distillation inherits the teacher's labels. Per-group bounds measure harm only on audited calls, while the training labels are big-model labels. (news.uchicago.edu/story/ai-biased-against-speakers-african-american-english-study-finds)
+
+## A3
+TOPIC: The teacher's own safety alignment sanitizes the safety-critical classes: it refuses or softens realistic suicidal, abusive, threatening and fraud-seeking caller turns
+SCENARIO: The pipeline asks the big model for 5,000 sensitive_event and unlawful_request examples with oblique, realistic wording. It refuses some prompts, and the rest come back textbook-explicit: "I am feeling suicidal." Threats, slurs and loan-fraud asks come out polite and stereotyped. Needle learns that only explicit phrasing is sensitive. A real caller says "doesn't matter, I won't be around for the install anyway." Needle labels it small_talk and the pitch continues.
+WHY IT BREAKS: The aligned teacher's refusal and harmlessness filters bias exactly the rare classes that are Tier A. The red team uses the same aligned models, so the sanitized wording also sets the test distribution. Synthetic coverage of these classes looks complete while the oblique real-world tail stays empty.
+
+## A4
+TOPIC: Simulated ASR noise does not match the pinned ASR's real confusion profile, so Needle is robust to errors the real ASR never makes
+SCENARIO: The big model writes "ASR errors" as plausible-looking typos, dropped words and homophones. The pinned ASR actually fails differently: it inserts fillers on noise, merges words across a narrowband codec, applies ITN quirks ("for" becomes "4") and has accent-specific substitutions. Needle trains on millions of LLM-imagined corruptions and scores well on synthetic noise sets. Live, the real ASR's patterns fall outside training, and error rates on noisy calls are several times the synthetic estimate.
+WHY IT BREAKS: Noise augmentation helps only when it matches the deployed channel's error distribution. An LLM has never seen this ASR's confusion matrix. The certified ASR version is pinned, but the data generator is not conditioned on it. Every robustness number drawn from synthetic noise therefore overstates real performance.
+
+## A5
+TOPIC: Event-schema growth leaves historical labels wrong: when an out_of_scope cluster becomes a new event, all older data still teaches the old label
+SCENARIO: Release 14 adds the event leave_taking, split from out_of_scope and acknowledge. 400k historical examples that say "okay thanks bye" stay labeled acknowledge, because real data is never replaced. The new event has 3k fresh examples. Training sees about 130 conflicting acknowledge labels for each leave_taking label. Needle learns acknowledge for most goodbyes, and the new event certifies only on its own small fresh test set.
+WHY IT BREAKS: Every schema change creates relabeling debt across the whole union of data, but the design says to add events and to keep real data, with no migration step. Label noise is systematic, concentrated on the very boundary the new event exists to fix. The per-source caps don't help: the conflict lies inside each source.
+
+## A6
+TOPIC: Training examples are not keyed to the graph version they were labeled against, so tool renames, merges and description edits mix incompatible supervision
+SCENARIO: In graph v7 the tool book_consult(time) is split into book_in_home(time) and book_video(time), and the description of request_human is reworded. The union of data still holds 200k v1–v6 examples whose targets are book_consult, or that were generated against the old descriptions. Some are filtered out, and the rest are rewritten by script. Needle learns that "come out to my house" is sometimes book_video. The tool-list hash certifies the new list, not the provenance of the data that trained it.
+WHY IT BREAKS: The certificate pins the deployed tool list, while training data carries no graph-version key or migration audit. Needle conditions on tool names and descriptions, so stale examples are inconsistent supervision. Old graph versions can't be replayed through the new schema, so nothing checks that each example's label is still valid.
+
+## A7
+TOPIC: The teacher model is a moving, retirable API, so the synthetic training set cannot be reproduced and a certified build can't be rebuilt
+SCENARIO: Release 9 was certified. Its data came from teacher version X through a vendor endpoint. The vendor silently updates X's behavior, then retires it. A regulator or plaintiff asks for the build to be reproduced, or a hotfix needs the same data regenerated with one more paraphrase family. Regenerating with the successor model shifts label rates and phrasing, so "the same pipeline" yields a different Needle that fails old regression slices. Bit-identical replay covers inference, not training.
+WHY IT BREAKS: Chen, Zaharia and Zou (2023) measured large behavior shifts in the "same" GPT-4 and GPT-3.5 model names over months. The bundle hashes weights, not teacher version, prompts and sampling seeds. Without those, the evidence chain from data to certificate can't be rebuilt. (arxiv.org/abs/2307.09009)
+
+## A8
+TOPIC: Audit labelers anchored on the model's proposed label (automation bias) contaminate the human ground truth that gates certification
+SCENARIO: To hit audit throughput, the labeling UI pre-fills each turn with Needle's or the big model's event and the labeler confirms or corrects it. On a fast "yeah, no, go ahead and send it, I'll look," the pre-fill says affirm. A tired labeler listening at 1.5x accepts it. Across 100k audited turns, borderline cases follow the suggestion. The measured harm rate falls, and states certify.
+WHY IT BREAKS: Pre-annotation measurably shifts human judgments toward the suggestion. The ground truth then correlates with the model it is grading, biasing harm estimates downward exactly at the margin. The design says "humans listening to audio" but never requires blind, unprimed labeling or measures agreement against blind double-labels. (arxiv.org/abs/2509.08514)
+
+## A9
+TOPIC: Adaptive overfitting to a reused certification and golden set: release-by-release tuning of thresholds, caps and data mixes against the same audited pools
+SCENARIO: Each release, engineers see which states missed the bound on the audited pool and the golden canary. They tweak the clarify margin, upsample the failing intent and adjust per-source caps, then re-check against the same pools. After 20 releases every state passes. Each tweak was small, but together they fit the particular calls in those pools. On a fresh month of traffic, three Tier A states exceed the bound.
+WHY IT BREAKS: Reusing a holdout adaptively makes it a training set. Dwork et al. (Science 2015) show that repeated, data-dependent queries invalidate holdout guarantees. This is not contamination by ingestion, and not simultaneous multiple comparisons: it is serial, human-in-the-loop selection. The design has no fresh-only evaluation rule, no limit on queries to the holdout and no fresh-holdout budget.
+
+## A10
+TOPIC: Retraining cadence vs certification evidence: an urgent fix needs new weights, and new weights reset the real-call evidence every state needs
+SCENARIO: A new stop euphemism spreads ("unsubscribe me" after a viral post). Fixing it needs a Needle retrain on the union of data. New weights get a new hash, so every state's certificate is void and needs fresh human-audited real calls. At 1e-5 with rule-of-three, that is about 300k audited calls per Tier A state. Options: run uncertified weights, run the whole fleet on deterministic fallback for months, or leave the missed stops live. The cadence is set by audit throughput, not by risk.
+WHY IT BREAKS: Global shared weights mean no fix is local: a one-intent patch re-opens every state. The bound can only be measured on real calls by that release, so evidence can't carry over. No release can fix a known harm faster than months of new audits allow, and that pushes operators toward exemptions.
